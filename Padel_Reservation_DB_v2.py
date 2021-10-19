@@ -9,24 +9,36 @@ import pandas as pd
 from dash.exceptions import PreventUpdate
 from dash_extensions import Download
 from flask import Flask
-import pause
-import datetime
+import time
+import datetime, timedelta
 import schedule
-import pause, schedule
 import selenium
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
-import time
-import datetime
 
-# server = Flask(__name__)
-# app = dash.Dash(server=server)
+cols = [
+    {"id": 0, "name": "Date"},
+    {"id": 1, "name": "StartHour"},
+    {"id": 2, "name": "EndHour"},
+    {"id": 3, "name": "Player1"},
+    {"id": 4, "name": "Player2"},
+    {"id": 5, "name": "Player3"},
+    {"id": 6, "name": "Field"},
+    {"id": 7, "name": "Recurring"}]
+
+colnames = ['Date','StartHour','Endhour','Player1','Player2','Player3','Field','Recurring']
+
 scheduler = schedule.Scheduler()
+
+chrome_options = webdriver.ChromeOptions()
+chrome_options.add_argument('--no-sandbox')
+chrome_options.add_argument('--disable-dev-shm-usage')
+chrome_options.add_argument('--headless')
 
 #Reservation function via Selenium
 def make_reservation(Date, startuur, einduur, player1, player2, player3, field):
     #Launch Browser and go to Tennis Vlaanderen
-    driver = webdriver.Chrome(executable_path=r"/usr/bin/chromedriver.exe")
+    driver = webdriver.Chrome(executable_path=r"/usr/bin/chromedriver",options = chrome_options)
     driver.get('https://www.tennisvlaanderen.be/zoek-een-terrein')
     time.sleep(3)
     
@@ -94,50 +106,55 @@ def make_reservation(Date, startuur, einduur, player1, player2, player3, field):
     if reservation_possible:
         reserve_button = driver.find_element_by_xpath('/html/body/div[2]/div[2]/div[2]/div/div[2]/div/div/div/div/div/div/div/form/div/div[2]/div/div/div[4]/input')
         reserve_button.click()
-        print(f"Reservation Successful for {player1}, {player2}, {player3}!")
         message = (f"Reservation Successful for {player1}, {player2}, {player3}!")
     else:
-        message = "Reservation Failed: "
+        message = f"Reservation Attempt for {Date} at {startuur} Failed: "
         error_message = driver.find_elements_by_xpath('/html/body/div[2]/div[2]/div[2]/div/div[2]/div/div/div/div/div/div/div/form/div/div[2]/div/div/span/ul')
         for mess in error_message:
             print(mess.text)
             message += mess.text
     
-    return message
+    return [message]
+
+def schedule_job(reserve_date, reserve_hour, date, start, end, p1, p2, p3, field):
+    if reserve_date == 0:
+        scheduler.every().monday.at(reserve_hour).do(make_reservation,date,start,end,p1,p2,p3,field)
+    elif reserve_date == 1:
+        scheduler.every().tuesday.at(reserve_hour).do(make_reservation,date,start,end,p1,p2,p3,field)
+    elif reserve_date == 2:
+        scheduler.every().wednesday.at(reserve_hour).do(make_reservation,date,start,end,p1,p2,p3,field)
+    elif reserve_date == 3:
+        scheduler.every().thursday.at(reserve_hour).do(make_reservation,date,start,end,p1,p2,p3,field)
+    elif reserve_date == 4:
+        scheduler.every().friday.at(reserve_hour).do(make_reservation,date,start,end,p1,p2,p3,field)
+    elif reserve_date == 5:
+        scheduler.every().saturday.at(reserve_hour).do(make_reservation,date,start,end,p1,p2,p3,field)
+    elif reserve_date == 6:
+        scheduler.every().sunday.at(reserve_hour).do(make_reservation,date,start,end,p1,p2,p3,field)
+    return scheduler.get_jobs()
 
 def update_schedule(df):
     #Execute or schedule reservation
     try:
         date = datetime.datetime(int(df[0][6:11]),int(df[0][3:5]),int(df[0][0:2]),int(df[1][0:2]),int(df[2][3:5]))
         reserve_date = (datetime.datetime(int(df[0][6:11]),int(df[0][3:5]),int(df[0][0:2])-7,int(df[1][0:2])-12,int(df[1][3:5])))
+        reserve_hour_str = reserve_date.time().strftime("%H:%M:%S")
 
         #Check if reservation can be made, else wait
         if datetime.datetime.today() > reserve_date:
             print(f'Reservation is in less than 7 days and 12 hours, a reservation attempt will be made ...')
-            message = make_reservation(df[0], df[1], df[2], df[3],df[4],df[5],df[6])
-            scheduler.every(10).minutes.do(make_reservation,df[0], df[1], df[2], df[3],df[4],df[5],df[6])
+            make_reservation(df[0], df[1], df[2], df[3],df[4],df[5],df[6])
+            message = schedule_job(reserve_date.weekday(),reserve_hour_str,df[0], df[1], df[2], df[3],df[4],df[5],df[6])            
+
         else:
             print(f'Reservation is more than 7 days and 12 hours away, a timer will be set to make the reservation at {reserve_date}!')
-            scheduler.every(1).minutes.do(make_reservation,df[0], df[1], df[2], df[3],df[4],df[5],df[6])
-            message = "scheduler 1st obs set"  
+            message = schedule_job(reserve_date.weekday(),reserve_hour_str,df[0], df[1], df[2], df[3],df[4],df[5],df[6])
+
+            
     except Exception as e: 
         message = (f'Wrong input: {e}')
 
-    return message
-
-# Import the cleaned data (importing csv into pandas)
-# df = pd.read_excel('reservations.xlsx', index_col=0)
-cols = [
-    {"id": 0, "name": "Date"},
-    {"id": 1, "name": "StartHour"},
-    {"id": 2, "name": "EndHour"},
-    {"id": 3, "name": "Player1"},
-    {"id": 4, "name": "Player2"},
-    {"id": 5, "name": "Player3"},
-    {"id": 6, "name": "Field"},
-    {"id": 7, "name": "Recurring"}]
-
-colnames = ['Date','StartHour','Endhour','Player1','Player2','Player3','Field','Recurring']
+    return message    
 
 # App layout
 app = dash.Dash(__name__, prevent_initial_callbacks=True) # this was introduced in Dash version 1.12.0
@@ -157,7 +174,9 @@ app.layout = html.Div([
                     html.Button("Save Data", style = {'textAlign': 'center'},
                                 id="save-button"),
                     html.Button("Schedule", style = {'textAlign': 'center'},
-                                id="schedule-button"),                 
+                                id="schedule-button"),
+                    html.Button("Run", style = {'textAlign': 'center'},
+                                id="run-button"),
                     html.Div("Don't forget to save your data before pressing schedule!",
                              id="output-2"), 
 #                    html.Div(html.P([html.Br()])),
@@ -205,8 +224,8 @@ app.layout = html.Div([
                         id='table',
                         data=[]),
                      html.Div(html.P([html.Br()])),
-                     html.Div(id="schedule-status")
-                 
+                     html.Div(id="schedule-status"),
+                     html.Div(id="running-status")
 
                     ]
             )
@@ -236,7 +255,7 @@ def download_as_csv(n_clicks, table_data):
     df.to_csv(download_buffer, index=False)
     download_buffer.seek(0)
     df.to_excel("reservations.xlsx", index = True, index_label = 'Reservation')
-    return dict(content=download_buffer.getvalue(), filename="upcoming_reservations_copy.csv")
+    return dict(content=download_buffer.getvalue(), filename="upcoming_reservations_local_copy.csv")
 
 @app.callback(
     [Output("schedule-status", component_property='children')],
@@ -245,17 +264,26 @@ def schedule_reservation(n_clicks):
     if n_clicks is None:
         raise PreventUpdate        
     df = pd.read_excel('reservations.xlsx', index_col=0)
+    scheduler.clear()
     for index, row in df.iterrows():
         output = update_schedule(df.values[index])
-        print(output)
-
-    return [f'Output: {output}']
+    return [f'Upcoming Reservations: {output}']
      
-    
-# -------------------------------------------------------------------------------------
-if __name__ == '__main__':
-    #host='127.0.0.1', port=8050, 
-    app.run_server(debug=False)
+@app.callback(
+    [Output("running-status", component_property='children')],
+    [Input("run-button", "n_clicks")])
+def run_schedule(n_clicks):
+    if n_clicks is None:
+        raise PreventUpdate        
     while True:
         scheduler.run_pending()
         time.sleep(1)
+        return ['Running ...']
+
+        
+# -------------------------------------------------------------------------------------
+
+
+if __name__ == '__main__':
+    #host='127.0.0.1', port=8050,
+    app.run_server(debug=False)
